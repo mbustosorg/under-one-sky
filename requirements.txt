@@ -1,0 +1,8 @@
+yoctopuce
+gpiozero
+python-osc
+asyncio
+RPi.GPIO
+pandas
+pytz
+#pandas - https://raspberrypi.stackexchange.com/questions/17073/how-do-i-install-pandas-on-raspberry-pi
