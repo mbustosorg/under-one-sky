@@ -16,8 +16,7 @@ import os
 import datetime
 from dateutil.relativedelta import relativedelta
 
-tides_data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'tidelevels_9414863.csv'), parse_dates=['DateTime']).set_index('DateTime')
-tides_data['decile'] = pd.cut(tides_data['Height'], 10, labels=False).apply(int)
+phase_data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'lunar_phases_phoenix.csv'), parse_dates=['DateTime']).set_index('DateTime')
 
 sun_data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'sunriseSunset.csv'), parse_dates=['sunrise', 'sunset'])
 sun_data['sunrise'] = sun_data['sunrise'].apply(lambda x: x.tz_localize('UTC'))
@@ -27,10 +26,21 @@ sun_data = sun_data.set_index('date')
 
 start_time = datetime.datetime.now()
 
+PHASE_NAME = {
+    1: "New Moon",
+    2: "Waxing Crescent",
+    3: "First Quarter",
+    4: "Waxing Gibbous",
+    5: "Full Moon",
+    6: "Waning Gibbous",
+    7: "Last Quarter",
+    8: "Waning Crescent",
+}
 
-def tide_level():
+
+def moon_phase() -> int:
     """ Current tide level decile """
-    return int(tides_data[tides_data.index > datetime.datetime.now()].iloc[0]['decile'])
+    return int(phase_data[phase_data.index > datetime.datetime.now()].iloc[0]['Phase'])
 
 
 def current_sunset() -> pd.Timestamp:
@@ -38,10 +48,10 @@ def current_sunset() -> pd.Timestamp:
     return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date()].loc['sunset']
 
 
-def lights_out(on_offset: int, hard_off: str):
+def lights_out(on_offset: int, hard_off: str) -> bool:
     """ Are we off now? """
-    now = pd.to_datetime(datetime.datetime.utcnow().replace(year=2000), utc=True).tz_convert('US/Pacific')
-    off_time = pd.to_datetime(datetime.datetime.strptime(hard_off, '%H:%M')).tz_localize('US/Pacific')
+    now = pd.to_datetime(datetime.datetime.utcnow().replace(year=2000), utc=True).tz_convert('US/Arizona')
+    off_time = pd.to_datetime(datetime.datetime.strptime(hard_off, '%H:%M')).tz_localize('US/Arizona')
     if now.time() > off_time.time():
         return True
     on_delta = relativedelta(minutes=on_offset)

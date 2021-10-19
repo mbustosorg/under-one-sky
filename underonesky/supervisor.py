@@ -1,5 +1,5 @@
 """
-    Copyright (C) 2020 Mauricio Bustos (m@bustos.org)
+    Copyright (C) 2021 Mauricio Bustos (m@bustos.org)
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -22,7 +22,7 @@ import subprocess
 from logging.handlers import RotatingFileHandler
 
 from underonesky.display_animations import State
-from underonesky.earth_data.earth_data import tide_level, lights_out, current_sunset
+from underonesky.earth_data.earth_data import moon_phase, lights_out, current_sunset, PHASE_NAME
 
 try:
     from gpiozero import DigitalOutputDevice, DigitalInputDevice
@@ -51,10 +51,8 @@ led_play = None
 watchdog = None
 temp_sensor = None
 power_pin = None
-
-BACKGROUND_RUN_INDEX = '/LEDPlay/player/backgroundRunIndex'
-BACKGROUND_MODE = '/LEDPlay/player/backgroundMode'
-FOREGROUND_RUN_INDEX = '/LEDPlay/player/foregroundRunIndex'
+phase_pin_numbers = [8, 9, 10, 11, 12, 13, 14, 15]
+phase_pins = []
 
 last_external = None
 
@@ -69,11 +67,16 @@ def handle_power_off(unused_addr=None, index=None):
     power_pin.off()
 
 
-async def main_loop(ledplay_startup, disable_sun):
+def handle_phase_select(unused_addr=None, index=None):
+    """Handle the moon phase select"""
+    return
+
+
+async def main_loop(ledplay_startup, disable_sun, upper_temp):
     """ Main execution loop """
     global last_external
 
-    current_tide_level = 0
+    current_moon_phase = 0
     current_state = State.STOPPED
     handle_power_off()
 
@@ -84,13 +87,16 @@ async def main_loop(ledplay_startup, disable_sun):
         """ Health checks """
         if watchdog:
             watchdog.resetWatchdog()
-        t = YTemperature.FirstTemperature().get_currentValue()
-        logger.info(t)
+        current_temperature = YTemperature.FirstTemperature().get_currentValue()
         """ Check on/off timing"""
         if disable_sun:
             off = False
         else:
             off = lights_out(supervision['lights_on'], supervision['lights_off'])
+        if current_temperature > upper_temp:
+            off = True
+            if current_state != State.STOPPED:
+                logger.warning('Shutting down due to over temp {}'.format(current_temperature))
         if last_external is not None:
             if (datetime.datetime.now() - last_external).seconds > 60:
                 last_external = None
@@ -101,15 +107,16 @@ async def main_loop(ledplay_startup, disable_sun):
             elif power_pin.value:
                 handle_power_off()
         else:
-            level = int(tide_level())
+            level = int(moon_phase())
             if current_state == State.STOPPED:
                 handle_power_on()
                 await asyncio.sleep(5)
-                logger.info('Starting up to level {}'.format(level))
+                logger.info('Starting up to moon phase {}'.format(PHASE_NAME[level]))
                 current_state = State.RUNNING
-            elif (current_state == State.RUNNING) and (current_tide_level != level):
-                logger.info('Moving to level {}'.format(level))
-            current_tide_level = level
+            elif (current_state == State.RUNNING) and (current_moon_phase != level):
+                logger.info('Moving to moon phase {}'.format(PHASE_NAME[level]))
+            handle_phase_select(level)
+            current_moon_phase = level
 
         await asyncio.sleep(1)
 
@@ -123,7 +130,7 @@ async def init_main(args, dispatcher, sensor_dispatcher):
     sensor_server = AsyncIOOSCUDPServer((args.controller_ip, args.controller_port), sensor_dispatcher, loop)
     server_transport, _ = await sensor_server.create_serve_endpoint()
 
-    await main_loop(args.ledplay_startup, args.disable_sun)
+    await main_loop(args.ledplay_startup, args.disable_sun, args.temperature_shutoff_c)
 
     transport.close()
 
@@ -142,6 +149,7 @@ if __name__ == "__main__":
     parser.add_argument('--ledplay_startup', required=False, type=int, default=60, help='Time to wait before LEDPlay starts up')
     parser.add_argument('--config', required=False, type=str, default='underonesky/supervision.json')
     parser.add_argument('--disable_sun', dest='disable_sun', action='store_true')
+    parser.add_argument('--temperature_shutoff_c', required=False, type=int, default=28, help='Upper temp (in C) to shutdown system')
     parser.add_argument('--kill_existing', dest='kill_existing', action='store_true')
     parser.set_defaults(disable_sun=False, kill_existing=False)
     args = parser.parse_args()
@@ -161,6 +169,9 @@ if __name__ == "__main__":
     with open(args.config, 'r') as file:
         supervision = json.load(file)
         power_pin = DigitalOutputDevice(supervision['power_pin'])
+    for pin in phase_pins:
+        phase_pin_numbers = DigitalOutputDevice(supervision['power_pin'])
+        phase_pins.append(DigitalOutputDevice(pin))
 
     errmsg = YRefParam()
     if YAPI.RegisterHub('usb', errmsg) != YAPI.SUCCESS:
@@ -186,7 +197,7 @@ if __name__ == "__main__":
     sensor_dispatcher = Dispatcher()
 
     logger.info('Serving on {}:{}'.format(args.ip, args.port))
-    logger.info('Current tide level is {}'.format(tide_level()))
+    logger.info('Current moon phase is {}'.format(PHASE_NAME[moon_phase()]))
     logger.info('Current sunset is {} UTC'.format(current_sunset()))
 
     loop = asyncio.get_event_loop()
