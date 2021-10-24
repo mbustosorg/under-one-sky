@@ -20,8 +20,8 @@ class TestEarthData(TestCase):
 
     def test_tide_level(self):
         """ Ensure level is valid """
-        level = ed.tide_level()
-        self.assertLess(level, 11)
+        level = ed.moon_phase()
+        self.assertLess(level, 9)
         self.assertGreater(level, 0)
 
     def test_sun(self):

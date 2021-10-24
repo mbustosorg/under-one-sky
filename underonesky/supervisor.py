@@ -14,8 +14,7 @@
 
 import argparse
 import asyncio
-import datetime
-import gc
+import time
 import json
 import logging
 import subprocess
@@ -57,21 +56,35 @@ phase_pins = []
 last_external = None
 
 
+def handle_test(unused_addr=None, index=None):
+    logger.info('Run a test cycle')
+    if watchdog:
+        watchdog.resetWatchdog()
+    handle_power_on()
+    for phase in range(2, 9):
+        logger.info("Phase " + PHASE_NAME[phase])
+        handle_phase_select(phase)
+        time.sleep(1)
+    handle_phase_select(0)
+    handle_power_off()
+    time.sleep(5)
+
+
 def handle_power_on(unused_addr=None, index=None):
-    logger.info('power on')
+    logger.info('Power on')
     power_pin.on()
 
 
 def handle_power_off(unused_addr=None, index=None):
-    logger.info('power off')
+    logger.info('Power off')
     power_pin.off()
 
 
-def handle_phase_select(unused_addr=None, index=None):
+def handle_phase_select(index=None):
     """Handle the moon phase select"""
     map(lambda x: x.off(), phase_pins)
-    phase_pins[index + 1].on()
-    return
+    if index > 1:
+        phase_pins[index - 1].on()
 
 
 async def main_loop(ledplay_startup, disable_sun, upper_temp):
@@ -89,36 +102,47 @@ async def main_loop(ledplay_startup, disable_sun, upper_temp):
         """ Health checks """
         if watchdog:
             watchdog.resetWatchdog()
-        current_temperature = YTemperature.FirstTemperature().get_currentValue()
-        """ Check on/off timing"""
-        if disable_sun:
-            off = False
-        else:
-            off = lights_out(supervision['lights_on'], supervision['lights_off'])
-        if current_temperature > upper_temp:
-            off = True
-            if current_state != State.STOPPED:
-                logger.warning('Shutting down due to over temp {}'.format(current_temperature))
         if last_external is not None:
             if (datetime.datetime.now() - last_external).seconds > 60:
                 last_external = None
-        elif off:
+            await asyncio.sleep(1)
+            continue
+        """ Check on/off timing"""
+        if disable_sun:
+            main_led_off = False
+            moon_off = False
+        else:
+            main_led_off = lights_out(supervision['lights_on'], supervision['lights_off'])
+            moon_off = lights_out(supervision['lights_on'])
+        current_temperature = YTemperature.FirstTemperature().get_currentValue()
+        if current_temperature > upper_temp:
+            if current_state != State.STOPPED:
+                logger.warning('Shutting down due to over temp {}'.format(current_temperature))
+                current_state = State.STOPPED
+                handle_power_off()
+            handle_phase_select(0)
+            await asyncio.sleep(1)
+            continue
+        if main_led_off:
             if current_state != State.STOPPED:
                 handle_power_off()
                 current_state = State.STOPPED
             elif power_pin.value:
                 handle_power_off()
         else:
-            level = int(moon_phase())
             if current_state == State.STOPPED:
                 handle_power_on()
-                await asyncio.sleep(5)
-                logger.info('Starting up to moon phase {}'.format(PHASE_NAME[level]))
                 current_state = State.RUNNING
-            elif (current_state == State.RUNNING) and (current_moon_phase != level):
+        if moon_off:
+            handle_phase_select(0)
+            current_moon_phase = 0
+            logger.info('Shutting down moon')
+        else:
+            level = int(moon_phase())
+            if current_moon_phase != level:
+                handle_phase_select(level)
+                current_moon_phase = level
                 logger.info('Moving to moon phase {}'.format(PHASE_NAME[level]))
-            handle_phase_select(level)
-            current_moon_phase = level
 
         await asyncio.sleep(1)
 
@@ -153,6 +177,7 @@ if __name__ == "__main__":
     parser.add_argument('--disable_sun', dest='disable_sun', action='store_true')
     parser.add_argument('--temperature_shutoff_c', required=False, type=int, default=28, help='Upper temp (in C) to shutdown system')
     parser.add_argument('--kill_existing', dest='kill_existing', action='store_true')
+    parser.add_argument('--test_phases', dest='test_phases', action='store_true')
     parser.set_defaults(disable_sun=False, kill_existing=False)
     args = parser.parse_args()
 
@@ -171,8 +196,7 @@ if __name__ == "__main__":
     with open(args.config, 'r') as file:
         supervision = json.load(file)
         power_pin = DigitalOutputDevice(supervision['power_pin'])
-    for pin in phase_pins:
-        phase_pin_numbers = DigitalOutputDevice(supervision['power_pin'])
+    for pin in phase_pin_numbers:
         phase_pins.append(DigitalOutputDevice(pin))
 
     errmsg = YRefParam()
@@ -195,12 +219,17 @@ if __name__ == "__main__":
     dispatcher = Dispatcher()
     dispatcher.map('/poweron', handle_power_on)
     dispatcher.map('/poweroff', handle_power_off)
+    dispatcher.map('/test', handle_test)
 
     sensor_dispatcher = Dispatcher()
 
     logger.info('Serving on {}:{}'.format(args.ip, args.port))
     logger.info('Current moon phase is {}'.format(PHASE_NAME[moon_phase()]))
     logger.info('Current sunset is {} UTC'.format(current_sunset()))
+
+    if args.test_phases:
+        while True:
+            handle_test()
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_main(args, dispatcher, sensor_dispatcher))
