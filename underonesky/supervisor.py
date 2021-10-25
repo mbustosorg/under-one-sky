@@ -95,7 +95,7 @@ async def main_loop(ledplay_startup, disable_sun, upper_temp):
     current_state = State.STOPPED
     handle_power_off()
 
-    """ Wait one minute for LED play to start up """
+    """ Wait prescribed time for LED play to start up """
     await asyncio.sleep(ledplay_startup)
 
     while True:
