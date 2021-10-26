@@ -107,13 +107,6 @@ async def main_loop(ledplay_startup, disable_sun, upper_temp):
                 last_external = None
             await asyncio.sleep(1)
             continue
-        """ Check on/off timing"""
-        if disable_sun:
-            main_led_off = False
-            moon_off = False
-        else:
-            main_led_off = lights_out(supervision['lights_on'], supervision['lights_off'])
-            moon_off = lights_out(supervision['lights_on'])
         current_temperature = YTemperature.FirstTemperature().get_currentValue()
         if current_temperature > upper_temp:
             if current_state != State.STOPPED:
@@ -123,6 +116,13 @@ async def main_loop(ledplay_startup, disable_sun, upper_temp):
             handle_phase_select(0)
             await asyncio.sleep(1)
             continue
+        """ Check on/off timing"""
+        if disable_sun:
+            main_led_off = False
+            moon_off = False
+        else:
+            main_led_off = lights_out(supervision['lights_on'], supervision['lights_off'])
+            moon_off = lights_out(supervision['lights_on'])
         if main_led_off:
             if current_state != State.STOPPED:
                 handle_power_off()
