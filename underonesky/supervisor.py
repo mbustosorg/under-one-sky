@@ -82,7 +82,7 @@ def handle_power_off(unused_addr=None, index=None):
 
 def handle_phase_select(index=None):
     """Handle the moon phase select"""
-    map(lambda x: x.off(), phase_pins)
+    list(map(lambda x: x.off(), phase_pins))
     if index > 1:
         phase_pins[index - 1].on()
 
