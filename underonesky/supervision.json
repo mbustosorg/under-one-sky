@@ -1,5 +1,5 @@
 {
-	"power_pin": 20,
+	"power_pin": 23,
 	"lights_on": -30,
 	"lights_off": "23:00"
 }

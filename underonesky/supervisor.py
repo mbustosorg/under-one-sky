@@ -17,6 +17,7 @@ import asyncio
 import time
 import json
 import logging
+import os
 import subprocess
 from logging.handlers import RotatingFileHandler
 
@@ -50,16 +51,30 @@ led_play = None
 watchdog = None
 temp_sensor = None
 power_pin = None
-phase_pin_numbers = [8, 9, 10, 11, 12, 13, 14, 15]
+phase_pin_numbers = [8, 9, 10, 11, 12, 13, 24, 25]
 phase_pins = []
 
 last_external = None
 
 
-def handle_test(unused_addr=None, index=None):
+def pi_temp() -> float:
+    """Onbard CPU temperature"""
+    temp = os.popen("cat /sys/class/thermal/thermal_zone0/temp").read()
+    return float(int(float(temp) / 1000.0))
+
+
+def handle_test(args) -> None:
+    """Run a test cycle"""
     logger.info('Run a test cycle')
+    logger.info('CPU temp (c) = {}'.format(pi_temp()))
     if watchdog:
         watchdog.resetWatchdog()
+    current_temperature = YTemperature.FirstTemperature().get_currentValue()
+    if current_temperature > args.temperature_shutoff_c:
+        logger.warning('Over temp')
+        time.sleep(5)
+        handle_power_off()
+        return
     handle_power_on()
     for phase in range(2, 9):
         logger.info("Phase " + PHASE_NAME[phase])
@@ -229,7 +244,7 @@ if __name__ == "__main__":
 
     if args.test_phases:
         while True:
-            handle_test()
+            handle_test(args)
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_main(args, dispatcher, sensor_dispatcher))
