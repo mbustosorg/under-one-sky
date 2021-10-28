@@ -49,7 +49,8 @@ logger.addHandler(file_handler)
 supervision = None
 led_play = None
 watchdog = None
-temp_sensor = None
+temp_sensor_1 = None
+temp_sensor_2 = None
 power_pin = None
 phase_pin_numbers = [8, 9, 10, 11, 12, 13, 24, 25]
 phase_pins = []
@@ -69,12 +70,10 @@ def handle_test(args) -> None:
     logger.info('CPU temp (c) = {}'.format(pi_temp()))
     if watchdog:
         watchdog.resetWatchdog()
-    current_temperature = YTemperature.FirstTemperature().get_currentValue()
-    if current_temperature > args.temperature_shutoff_c:
-        logger.warning('Over temp')
-        time.sleep(5)
-        handle_power_off()
-        return
+    current_temperature_1 = temp_sensor_1.get_currentValue()
+    current_temperature_2 = temp_sensor_2.get_currentValue()
+    logger.info('Thermocouple 1 (c) = {}'.format(current_temperature_1))
+    logger.info('Thermocouple 2 (c) = {}'.format(current_temperature_2))
     handle_power_on()
     for phase in range(2, 9):
         logger.info("Phase " + PHASE_NAME[phase])
@@ -220,7 +219,8 @@ if __name__ == "__main__":
     else:
         temp_sensor = YTemperature.FirstTemperature()
         if temp_sensor:
-            temp_sensor_name = temp_sensor.get_module().get_serialNumber() + '.temperature'
+            temp_sensor_1 = YTemperature.FindTemperature(temp_sensor.get_module().get_serialNumber() + '.temperature1')
+            temp_sensor_2 = YTemperature.FindTemperature(temp_sensor.get_module().get_serialNumber() + '.temperature2')
         else:
             logger.error('No temp sensor connected')
         watchdog = YWatchdog.FirstWatchdog()
