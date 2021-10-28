@@ -64,24 +64,25 @@ def pi_temp() -> float:
     return float(int(float(temp) / 1000.0))
 
 
-def handle_test(args) -> None:
+def handle_test(unused_addr=None, index=None) -> None:
     """Run a test cycle"""
-    logger.info('Run a test cycle')
-    logger.info('CPU temp (c) = {}'.format(pi_temp()))
-    if watchdog:
-        watchdog.resetWatchdog()
-    current_temperature_1 = temp_sensor_1.get_currentValue()
-    current_temperature_2 = temp_sensor_2.get_currentValue()
-    logger.info('Thermocouple 1 (c) = {}'.format(current_temperature_1))
-    logger.info('Thermocouple 2 (c) = {}'.format(current_temperature_2))
-    handle_power_on()
-    for phase in range(2, 9):
-        logger.info("Phase " + PHASE_NAME[phase])
-        handle_phase_select(phase)
-        time.sleep(1)
-    handle_phase_select(0)
-    handle_power_off()
-    time.sleep(5)
+    for i in range(5):
+        logger.info('Run a test cycle')
+        logger.info('CPU temp (c) = {}'.format(pi_temp()))
+        if watchdog:
+            watchdog.resetWatchdog()
+        current_temperature_1 = temp_sensor_1.get_currentValue()
+        current_temperature_2 = temp_sensor_2.get_currentValue()
+        logger.info('Thermocouple 1 (c) = {}'.format(current_temperature_1))
+        logger.info('Thermocouple 2 (c) = {}'.format(current_temperature_2))
+        handle_power_on()
+        for phase in range(2, 9):
+            logger.info("Phase " + PHASE_NAME[phase])
+            handle_phase_select(phase)
+            time.sleep(1)
+        handle_phase_select(0)
+        handle_power_off()
+        time.sleep(5)
 
 
 def handle_power_on(unused_addr=None, index=None):
@@ -244,7 +245,7 @@ if __name__ == "__main__":
 
     if args.test_phases:
         while True:
-            handle_test(args)
+            handle_test()
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_main(args, dispatcher, sensor_dispatcher))
