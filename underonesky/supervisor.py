@@ -51,6 +51,8 @@ led_play = None
 watchdog = None
 temp_sensor_1 = None
 temp_sensor_2 = None
+max_cpu_temp = 60
+max_led_temp = 60
 power_pin = None
 phase_pin_numbers = [8, 9, 10, 11, 12, 13, 24, 25]
 phase_pins = []
@@ -65,8 +67,16 @@ def pi_temp() -> float:
 
 
 def handle_test(unused_addr=None, index=None) -> None:
+    """Set a phase"""
+    if 2 <= index <= 8:
+        logger.info("Test phase " + PHASE_NAME[index])
+        handle_phase_select(index)
+        time.sleep(2)
+
+
+def handle_full_test(unused_addr=None, index=None) -> None:
     """Run a test cycle"""
-    for i in range(5):
+    for i in range(2):
         logger.info('Run a test cycle')
         logger.info('CPU temp (c) = {}'.format(pi_temp()))
         if watchdog:
@@ -75,13 +85,11 @@ def handle_test(unused_addr=None, index=None) -> None:
         current_temperature_2 = temp_sensor_2.get_currentValue()
         logger.info('Thermocouple 1 (c) = {}'.format(current_temperature_1))
         logger.info('Thermocouple 2 (c) = {}'.format(current_temperature_2))
-        handle_power_on()
         for phase in range(2, 9):
             logger.info("Phase " + PHASE_NAME[phase])
-            handle_phase_select(phase)
-            time.sleep(1)
+        handle_phase_select(phase)
+        time.sleep(2)
         handle_phase_select(0)
-        handle_power_off()
         time.sleep(5)
 
 
@@ -102,7 +110,7 @@ def handle_phase_select(index=None):
         phase_pins[index - 1].on()
 
 
-async def main_loop(ledplay_startup, disable_sun, upper_temp):
+async def main_loop(ledplay_startup, disable_sun):
     """ Main execution loop """
     global last_external
 
@@ -122,22 +130,41 @@ async def main_loop(ledplay_startup, disable_sun, upper_temp):
                 last_external = None
             await asyncio.sleep(1)
             continue
-        current_temperature = YTemperature.FirstTemperature().get_currentValue()
-        if current_temperature > upper_temp:
+        if pi_temp() > max_cpu_temp:
             if current_state != State.STOPPED:
-                logger.warning('Shutting down due to over temp {}'.format(current_temperature))
+                logger.warning('Shutting down due to CPU over temp {}'.format(current_temperature))
                 current_state = State.STOPPED
                 handle_power_off()
             handle_phase_select(0)
             await asyncio.sleep(1)
             continue
+        if temp_sensor_1:
+            current_temperature = temp_sensor_1.get_currentValue()
+            if current_temperature > max_led_temp:
+                if current_state != State.STOPPED:
+                    logger.warning('Shutting down due to over temp {}'.format(current_temperature))
+                    current_state = State.STOPPED
+                    handle_power_off()
+                handle_phase_select(0)
+                await asyncio.sleep(1)
+                continue
+        if temp_sensor_2:
+            current_temperature = temp_sensor_2.get_currentValue()
+            if current_temperature > max_led_temp:
+                if current_state != State.STOPPED:
+                    logger.warning('Shutting down due to over temp {}'.format(current_temperature))
+                    current_state = State.STOPPED
+                    handle_power_off()
+                handle_phase_select(0)
+                await asyncio.sleep(1)
+                continue
         """ Check on/off timing"""
         if disable_sun:
             main_led_off = False
             moon_off = False
         else:
-            main_led_off = lights_out(supervision['lights_on'], supervision['lights_off'])
-            moon_off = lights_out(supervision['lights_on'])
+            main_led_off = lights_out(supervision['leds_on'], supervision['leds_off'])
+            moon_off = lights_out(supervision['moons_on'])
         if main_led_off:
             if current_state != State.STOPPED:
                 handle_power_off()
@@ -171,7 +198,7 @@ async def init_main(args, dispatcher, sensor_dispatcher):
     sensor_server = AsyncIOOSCUDPServer((args.controller_ip, args.controller_port), sensor_dispatcher, loop)
     server_transport, _ = await sensor_server.create_serve_endpoint()
 
-    await main_loop(args.ledplay_startup, args.disable_sun, args.temperature_shutoff_c)
+    await main_loop(args.ledplay_startup, args.disable_sun)
 
     transport.close()
 
@@ -182,7 +209,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--ip', default='192.168.4.1', help='The ip to listen on')
-    parser.add_argument('--port', type=int, default=9999, help='The port to listen on')
+    parser.add_argument('--port', type=int, default=1234, help='The port to listen on')
     parser.add_argument('--controller_ip', default='192.168.4.1', help='The controller ip address')
     parser.add_argument('--controller_port', type=int, default=9998, help='The port that the controller is listening on')
     parser.add_argument('--ledplay_ip', default='192.168.4.1', help='The LED Play ip address')
@@ -190,10 +217,10 @@ if __name__ == "__main__":
     parser.add_argument('--ledplay_startup', required=False, type=int, default=60, help='Time to wait before LEDPlay starts up')
     parser.add_argument('--config', required=False, type=str, default='underonesky/supervision.json')
     parser.add_argument('--disable_sun', dest='disable_sun', action='store_true')
-    parser.add_argument('--temperature_shutoff_c', required=False, type=int, default=28, help='Upper temp (in C) to shutdown system')
     parser.add_argument('--kill_existing', dest='kill_existing', action='store_true')
     parser.add_argument('--test_phases', dest='test_phases', action='store_true')
-    parser.set_defaults(disable_sun=False, kill_existing=False)
+    parser.add_argument('--debug', dest='debug', action='store_true')
+    parser.set_defaults(disable_sun=False, kill_existing=False, debug=False)
     args = parser.parse_args()
 
     if args.kill_existing:
@@ -211,6 +238,8 @@ if __name__ == "__main__":
     with open(args.config, 'r') as file:
         supervision = json.load(file)
         power_pin = DigitalOutputDevice(supervision['power_pin'])
+        max_led_temp = supervision['max_led_temp']
+        max_cpu_temp = supervision['max_cpu_temp']
     for pin in phase_pin_numbers:
         phase_pins.append(DigitalOutputDevice(pin))
 
@@ -226,7 +255,10 @@ if __name__ == "__main__":
             logger.error('No temp sensor connected')
         watchdog = YWatchdog.FirstWatchdog()
         if watchdog:
-            watchdog.resetWatchdog()
+            if args.debug:
+                watchdog.set_running(YWatchdog.RUNNING_OFF)
+            else:
+                watchdog.resetWatchdog()
         else:
             logger.error('No watchdog connected')
 
@@ -236,6 +268,7 @@ if __name__ == "__main__":
     dispatcher.map('/poweron', handle_power_on)
     dispatcher.map('/poweroff', handle_power_off)
     dispatcher.map('/test', handle_test)
+    dispatcher.map('/full_test', handle_full_test)
 
     sensor_dispatcher = Dispatcher()
 
