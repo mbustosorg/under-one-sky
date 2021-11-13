@@ -53,29 +53,68 @@ temp_sensor_1 = None
 temp_sensor_2 = None
 max_cpu_temp = 60
 max_led_temp = 60
+temp_shutdown = {
+    "cpu": 0,
+    "temp_1": 0,
+    "temp_2": 0
+}
+last_temp = {
+    "cpu": 0,
+    "temp_1": 0,
+    "temp_2": 0
+}
 power_pin = None
 phase_pin_numbers = [8, 9, 10, 11, 12, 13, 24, 25]
 phase_pins = []
+current_moon_phase = 0
 
 last_external = None
 
+BACKGROUND_RUN_INDEX = "/LEDPlay/player/backgroundRunIndex"
+BACKGROUND_MODE = '/LEDPlay/player/backgroundMode'
+
 
 def pi_temp() -> float:
-    """Onbard CPU temperature"""
+    """Onboard CPU temperature"""
     temp = os.popen("cat /sys/class/thermal/thermal_zone0/temp").read()
     return float(int(float(temp) / 1000.0))
 
 
 def handle_test(unused_addr=None, index=None) -> None:
     """Set a phase"""
+    global current_moon_phase
+
     if 2 <= index <= 8:
+        current_moon_phase = index
         logger.info("Test phase " + PHASE_NAME[index])
         handle_phase_select(index)
         time.sleep(2)
 
 
+def handle_cpu_temp(unused_addr=None, index=None) -> None:
+    """Override the CPU temp"""
+    global last_temp
+    global last_external
+
+    logger.info('Override CPU Temp to {}'.format(index))
+    last_temp['cpu'] = index
+    last_external = datetime.datetime.now()
+
+
+def handle_led_temp(unused_addr=None, index=None) -> None:
+    """Override the LED temp"""
+    global last_temp
+    global last_external
+
+    logger.info('Override LED Temps to {}'.format(index))
+    last_temp['temp_1'] = index
+    last_external = datetime.datetime.now()
+
+
 def handle_full_test(unused_addr=None, index=None) -> None:
     """Run a test cycle"""
+    global current_moon_phase
+
     for i in range(2):
         logger.info('Run a test cycle')
         logger.info('CPU temp (c) = {}'.format(pi_temp()))
@@ -87,19 +126,42 @@ def handle_full_test(unused_addr=None, index=None) -> None:
         logger.info('Thermocouple 2 (c) = {}'.format(current_temperature_2))
         for phase in range(2, 9):
             logger.info("Phase " + PHASE_NAME[phase])
-        handle_phase_select(phase)
-        time.sleep(2)
+            handle_phase_select(phase)
+            time.sleep(2)
         handle_phase_select(0)
         time.sleep(5)
+    current_moon_phase = 0
+
+
+def handle_background_mode(unused_addr, index):
+    """ Process the BACKGROUND_MODE message """
+    logger.info('{} {}'.format(BACKGROUND_MODE, index))
+    msg = osc_message_builder.OscMessageBuilder(address=BACKGROUND_MODE)
+    msg.add_arg(index)
+    led_play.send(msg.build())
+
+
+def handle_background_run_index(unused_addr, index, external=True):
+    """ Process the BACKGROUND_RUN_INDEX message """
+    global last_external
+
+    if not power_pin.value:
+        handle_power_on()
+    logger.info('{} {}'.format(BACKGROUND_RUN_INDEX, index))
+    msg = osc_message_builder.OscMessageBuilder(address=BACKGROUND_RUN_INDEX)
+    msg.add_arg(index)
+    led_play.send(msg.build())
+    if external:
+        last_external = datetime.datetime.now()
 
 
 def handle_power_on(unused_addr=None, index=None):
-    logger.info('Power on')
+    logger.info('Main LED power on')
     power_pin.on()
 
 
 def handle_power_off(unused_addr=None, index=None):
-    logger.info('Power off')
+    logger.info('Main LED power off')
     power_pin.off()
 
 
@@ -113,8 +175,9 @@ def handle_phase_select(index=None):
 async def main_loop(ledplay_startup, disable_sun):
     """ Main execution loop """
     global last_external
+    global current_moon_phase
+    global temp_shutdown
 
-    current_moon_phase = 0
     current_state = State.STOPPED
     handle_power_off()
 
@@ -126,38 +189,57 @@ async def main_loop(ledplay_startup, disable_sun):
         if watchdog:
             watchdog.resetWatchdog()
         if last_external is not None:
-            if (datetime.datetime.now() - last_external).seconds > 60:
+            if (datetime.datetime.now() - last_external).seconds > 10:
                 last_external = None
+        else:
+            last_temp['cpu'] = pi_temp()
+            last_temp['temp_1'] = temp_sensor_1.get_currentValue() if temp_sensor_1 else 0
+            last_temp['temp_2'] = temp_sensor_2.get_currentValue() if temp_sensor_2 else 0
+        if temp_shutdown['cpu'] or temp_shutdown['temp_1'] or temp_shutdown['temp_2']:
+            if temp_shutdown['cpu']:
+                if max_cpu_temp - supervision['cpu_temp_hysteresis'] > last_temp['cpu']:
+                    temp_shutdown['cpu'] = 0
+                    logger.warning('CPU cooled down to {}'.format(last_temp['cpu']))
+            if temp_shutdown['temp_1']:
+                if max_led_temp - supervision['led_temp_hysteresis'] > last_temp['temp_1']:
+                    temp_shutdown['temp_1'] = 0
+                    logger.warning('LED temp 1 cooled down to {}'.format(last_temp['temp_1']))
+            if temp_shutdown['temp_2']:
+                if max_led_temp - supervision['led_temp_hysteresis'] > last_temp['temp_2']:
+                    temp_shutdown['temp_2'] = 0
+                    logger.warning('LED temp 2 cooled down to {}'.format(last_temp['temp_1']))
             await asyncio.sleep(1)
             continue
-        if pi_temp() > max_cpu_temp:
+        if last_temp['cpu'] > max_cpu_temp:
             if current_state != State.STOPPED:
-                logger.warning('Shutting down due to CPU over temp {}'.format(current_temperature))
+                logger.warning('Shutting down due to CPU over temp {}'.format(last_temp['cpu']))
                 current_state = State.STOPPED
-                handle_power_off()
+                shutdown_led_sequence()
+            temp_shutdown['cpu'] = last_temp['cpu']
             handle_phase_select(0)
+            current_moon_phase = 0
             await asyncio.sleep(1)
             continue
-        if temp_sensor_1:
-            current_temperature = temp_sensor_1.get_currentValue()
-            if current_temperature > max_led_temp:
-                if current_state != State.STOPPED:
-                    logger.warning('Shutting down due to over temp {}'.format(current_temperature))
-                    current_state = State.STOPPED
-                    handle_power_off()
-                handle_phase_select(0)
-                await asyncio.sleep(1)
-                continue
-        if temp_sensor_2:
-            current_temperature = temp_sensor_2.get_currentValue()
-            if current_temperature > max_led_temp:
-                if current_state != State.STOPPED:
-                    logger.warning('Shutting down due to over temp {}'.format(current_temperature))
-                    current_state = State.STOPPED
-                    handle_power_off()
-                handle_phase_select(0)
-                await asyncio.sleep(1)
-                continue
+        if last_temp['temp_1'] > max_led_temp:
+            if current_state != State.STOPPED:
+                logger.warning('Shutting down due to over temp {}'.format(last_temp['temp_1']))
+                current_state = State.STOPPED
+                shutdown_led_sequence()
+            temp_shutdown['temp_1'] = last_temp['temp_1']
+            handle_phase_select(0)
+            current_moon_phase = 0
+            await asyncio.sleep(1)
+            continue
+        if last_temp['temp_2'] > max_led_temp:
+            if current_state != State.STOPPED:
+                logger.warning('Shutting down due to over temp {}'.format(last_temp['temp_2']))
+                current_state = State.STOPPED
+                shutdown_led_sequence()
+            temp_shutdown['temp_2'] = last_temp['temp_2']
+            handle_phase_select(0)
+            current_moon_phase = 0
+            await asyncio.sleep(1)
+            continue
         """ Check on/off timing"""
         if disable_sun:
             main_led_off = False
@@ -167,18 +249,20 @@ async def main_loop(ledplay_startup, disable_sun):
             moon_off = lights_out(supervision['moons_on'])
         if main_led_off:
             if current_state != State.STOPPED:
-                handle_power_off()
                 current_state = State.STOPPED
+                await shutdown_led_sequence()
             elif power_pin.value:
-                handle_power_off()
+                await shutdown_led_sequence()
         else:
             if current_state == State.STOPPED:
-                handle_power_on()
+                logger.info('Powering up LEDs')
+                startup_led_sequence()
                 current_state = State.RUNNING
         if moon_off:
-            handle_phase_select(0)
-            current_moon_phase = 0
-            logger.info('Shutting down moon')
+            if current_moon_phase != 0:
+                handle_phase_select(0)
+                current_moon_phase = 0
+                logger.info('Shutting down moon')
         else:
             level = int(moon_phase())
             if current_moon_phase != level:
@@ -189,14 +273,27 @@ async def main_loop(ledplay_startup, disable_sun):
         await asyncio.sleep(1)
 
 
-async def init_main(args, dispatcher, sensor_dispatcher):
+def startup_led_sequence():
+    handle_background_run_index(None, 1, False)
+    handle_background_mode(None, 1)
+    handle_power_on()
+    time.sleep(1)
+    handle_background_run_index(None, 3, False)
+
+
+def shutdown_led_sequence():
+    handle_background_run_index(None, 0, False)
+    time.sleep(5)
+    handle_background_mode(None, 0)
+    handle_power_off()
+
+
+async def init_main(args, dispatcher):
     """ Initialization routine """
     loop = asyncio.get_event_loop()
+    logger.info('Serving on {}:{}'.format(args.ip, args.port))
     server = AsyncIOOSCUDPServer((args.ip, args.port), dispatcher, loop)
     transport, _ = await server.create_serve_endpoint()
-
-    sensor_server = AsyncIOOSCUDPServer((args.controller_ip, args.controller_port), sensor_dispatcher, loop)
-    server_transport, _ = await sensor_server.create_serve_endpoint()
 
     await main_loop(args.ledplay_startup, args.disable_sun)
 
@@ -208,11 +305,9 @@ if __name__ == "__main__":
     os.system('hwclock -s')
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--ip', default='192.168.4.1', help='The ip to listen on')
-    parser.add_argument('--port', type=int, default=1234, help='The port to listen on')
-    parser.add_argument('--controller_ip', default='192.168.4.1', help='The controller ip address')
-    parser.add_argument('--controller_port', type=int, default=9998, help='The port that the controller is listening on')
-    parser.add_argument('--ledplay_ip', default='192.168.4.1', help='The LED Play ip address')
+    parser.add_argument('--ip', default='192.168.7.88', help='The ip to listen on')
+    parser.add_argument('--port', type=int, default=9999, help='The port to listen on')
+    parser.add_argument('--ledplay_ip', default='192.168.7.88', help='The LED Play ip address')
     parser.add_argument('--ledplay_port', type=int, default=1234, help='The port that the LED Play application is listening on')
     parser.add_argument('--ledplay_startup', required=False, type=int, default=60, help='Time to wait before LEDPlay starts up')
     parser.add_argument('--config', required=False, type=str, default='underonesky/supervision.json')
@@ -265,14 +360,14 @@ if __name__ == "__main__":
     led_play = udp_client.UDPClient(args.ledplay_ip, args.ledplay_port)
 
     dispatcher = Dispatcher()
-    dispatcher.map('/poweron', handle_power_on)
-    dispatcher.map('/poweroff', handle_power_off)
-    dispatcher.map('/test', handle_test)
-    dispatcher.map('/full_test', handle_full_test)
+    dispatcher.map('/supervisor/poweron', handle_power_on)
+    dispatcher.map('/supervisor/poweroff', handle_power_off)
+    dispatcher.map('/supervisor/moon', handle_test)
+    dispatcher.map('/supervisor/full_test', handle_full_test)
+    dispatcher.map('/supervisor/led_temp', handle_led_temp)
+    dispatcher.map('/supervisor/cpu_temp', handle_cpu_temp)
+    dispatcher.map('/supervisor/run_index', handle_background_run_index)
 
-    sensor_dispatcher = Dispatcher()
-
-    logger.info('Serving on {}:{}'.format(args.ip, args.port))
     logger.info('Current moon phase is {}'.format(PHASE_NAME[moon_phase()]))
     logger.info('Current sunset is {} UTC'.format(current_sunset()))
 
@@ -281,4 +376,4 @@ if __name__ == "__main__":
             handle_test()
 
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_main(args, dispatcher, sensor_dispatcher))
+    loop.run_until_complete(init_main(args, dispatcher))

@@ -5,7 +5,7 @@
 	"moons_on": -30,
 	"moons_off": 30,
 	"max_led_temp": 60,
-	"temp_hysteresis": 10,
+	"led_temp_hysteresis": 10,
 	"max_cpu_temp": 90,
 	"cpu_temp_hysteresis": 10
 }
