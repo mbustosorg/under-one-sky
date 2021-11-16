@@ -45,7 +45,18 @@ def moon_phase() -> int:
 
 def current_sunset() -> pd.Timestamp:
     """ Current Sunset value """
-    return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date()].loc['sunset']
+    try:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date()].loc['sunset']
+    except Exception as e:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date() - relativedelta(days=1)].loc['sunset']
+
+
+def current_sunrise() -> pd.Timestamp:
+    """ Current Sunset value """
+    try:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date()].loc['sunrise']
+    except Exception as e:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date() - relativedelta(days=1)].loc['sunrise']
 
 
 def lights_out(on_offset: int, hard_off: str = None) -> bool:

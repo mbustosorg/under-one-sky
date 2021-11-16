@@ -22,7 +22,7 @@ import subprocess
 from logging.handlers import RotatingFileHandler
 
 from underonesky.display_animations import State
-from underonesky.earth_data.earth_data import moon_phase, lights_out, current_sunset, PHASE_NAME
+from underonesky.earth_data.earth_data import moon_phase, lights_out, current_sunset, current_sunrise, PHASE_NAME
 
 try:
     from gpiozero import DigitalOutputDevice, DigitalInputDevice
@@ -64,7 +64,7 @@ last_temp = {
     "temp_2": 0
 }
 power_pin = None
-phase_pin_numbers = [8, 9, 10, 11, 12, 13, 24, 25]
+phase_pin_numbers = [25, 24, 13, 12, 11, 10, 9, 8]
 phase_pins = []
 current_moon_phase = 0
 
@@ -84,11 +84,11 @@ def handle_test(unused_addr=None, index=None) -> None:
     """Set a phase"""
     global current_moon_phase
 
-    if 2 <= index <= 8:
+    if 1 <= index <= 8:
         current_moon_phase = index
-        logger.info("Test phase " + PHASE_NAME[index])
-        handle_phase_select(index)
-        time.sleep(2)
+        logger.info("Test phase " + PHASE_NAME[current_moon_phase])
+        handle_phase_select(current_moon_phase)
+        time.sleep(10)
 
 
 def handle_cpu_temp(unused_addr=None, index=None) -> None:
@@ -124,8 +124,8 @@ def handle_full_test(unused_addr=None, index=None) -> None:
         current_temperature_2 = temp_sensor_2.get_currentValue()
         logger.info('Thermocouple 1 (c) = {}'.format(current_temperature_1))
         logger.info('Thermocouple 2 (c) = {}'.format(current_temperature_2))
-        for phase in range(2, 9):
-            logger.info("Phase " + PHASE_NAME[phase])
+        for phase in range(1, 9):
+            logger.info("Phase {} [{}]".format(PHASE_NAME[phase], phase))
             handle_phase_select(phase)
             time.sleep(2)
         handle_phase_select(0)
@@ -168,11 +168,12 @@ def handle_power_off(unused_addr=None, index=None):
 def handle_phase_select(index=None):
     """Handle the moon phase select"""
     list(map(lambda x: x.off(), phase_pins))
-    if index > 1:
-        phase_pins[index - 1].on()
+    if 2 <= index <= 8:
+        logger.info('Moved to moon phase {} [{}]'.format(PHASE_NAME[index], index))
+        phase_pins[index - 2].on()
 
 
-async def main_loop(ledplay_startup, disable_sun):
+async def main_loop(ledplay_startup, disable_sun, debug):
     """ Main execution loop """
     global last_external
     global current_moon_phase
@@ -186,7 +187,7 @@ async def main_loop(ledplay_startup, disable_sun):
 
     while True:
         """ Health checks """
-        if watchdog:
+        if watchdog and not debug:
             watchdog.resetWatchdog()
         if last_external is not None:
             if (datetime.datetime.now() - last_external).seconds > 10:
@@ -250,9 +251,9 @@ async def main_loop(ledplay_startup, disable_sun):
         if main_led_off:
             if current_state != State.STOPPED:
                 current_state = State.STOPPED
-                await shutdown_led_sequence()
+                shutdown_led_sequence()
             elif power_pin.value:
-                await shutdown_led_sequence()
+                shutdown_led_sequence()
         else:
             if current_state == State.STOPPED:
                 logger.info('Powering up LEDs')
@@ -266,22 +267,22 @@ async def main_loop(ledplay_startup, disable_sun):
         else:
             level = int(moon_phase())
             if current_moon_phase != level:
+                logger.info('Moving to moon phase {} [{}]'.format(PHASE_NAME[level], level))
                 handle_phase_select(level)
                 current_moon_phase = level
-                logger.info('Moving to moon phase {}'.format(PHASE_NAME[level]))
 
         await asyncio.sleep(1)
 
 
-def startup_led_sequence():
+def startup_led_sequence(unused_addr=None):
     handle_background_run_index(None, 1, False)
     handle_background_mode(None, 1)
     handle_power_on()
     time.sleep(1)
-    handle_background_run_index(None, 3, False)
+    handle_background_mode(None, 3)
 
 
-def shutdown_led_sequence():
+def shutdown_led_sequence(unused_addr=None):
     handle_background_run_index(None, 0, False)
     time.sleep(5)
     handle_background_mode(None, 0)
@@ -291,11 +292,11 @@ def shutdown_led_sequence():
 async def init_main(args, dispatcher):
     """ Initialization routine """
     loop = asyncio.get_event_loop()
-    logger.info('Serving on {}:{}'.format(args.ip, args.port))
+    logger.info('Serving OSC on {}:{}'.format(args.ip, args.port))
     server = AsyncIOOSCUDPServer((args.ip, args.port), dispatcher, loop)
     transport, _ = await server.create_serve_endpoint()
 
-    await main_loop(args.ledplay_startup, args.disable_sun)
+    await main_loop(args.ledplay_startup, args.disable_sun, args.debug)
 
     transport.close()
 
@@ -357,6 +358,7 @@ if __name__ == "__main__":
         else:
             logger.error('No watchdog connected')
 
+    logger.info('LEDPlay OSC client on {}:{}'.format(args.ledplay_ip, args.ledplay_port))
     led_play = udp_client.UDPClient(args.ledplay_ip, args.ledplay_port)
 
     dispatcher = Dispatcher()
@@ -367,9 +369,12 @@ if __name__ == "__main__":
     dispatcher.map('/supervisor/led_temp', handle_led_temp)
     dispatcher.map('/supervisor/cpu_temp', handle_cpu_temp)
     dispatcher.map('/supervisor/run_index', handle_background_run_index)
+    dispatcher.map('/supervisor/startup_sequence', startup_led_sequence)
+    dispatcher.map('/supervisor/shutdown_sequence', shutdown_led_sequence)
 
     logger.info('Current moon phase is {}'.format(PHASE_NAME[moon_phase()]))
-    logger.info('Current sunset is {} UTC'.format(current_sunset()))
+    logger.info('Current sunrise is {}'.format(current_sunrise()))
+    logger.info('Current sunset is {}'.format(current_sunset()))
 
     if args.test_phases:
         while True:
