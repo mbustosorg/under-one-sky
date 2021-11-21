@@ -279,11 +279,11 @@ def startup_led_sequence(unused_addr=None):
     handle_background_mode(None, 1)
     handle_power_on()
     time.sleep(1)
-    handle_background_mode(None, 3)
+    handle_background_mode(None, 2)
 
 
 def shutdown_led_sequence(unused_addr=None):
-    handle_background_run_index(None, 0, False)
+    handle_background_run_index(None, 1, False)
     time.sleep(5)
     handle_background_mode(None, 0)
     handle_power_off()
