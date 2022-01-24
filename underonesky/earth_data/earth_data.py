@@ -19,8 +19,8 @@ from dateutil.relativedelta import relativedelta
 phase_data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'lunar_phases_phoenix.csv'), parse_dates=['DateTime']).set_index('DateTime')
 
 sun_data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'sunriseSunset.csv'), parse_dates=['sunrise', 'sunset'])
-sun_data['sunrise'] = sun_data['sunrise'].apply(lambda x: x.tz_localize('UTC'))
-sun_data['sunset'] = sun_data['sunset'].apply(lambda x: x.tz_localize('UTC'))
+sun_data['sunrise'] = sun_data['sunrise'].apply(lambda x: x.tz_localize("UTC").tz_convert("US/Arizona"))
+sun_data['sunset'] = sun_data['sunset'].apply(lambda x: x.tz_localize("UTC").tz_convert("US/Arizona"))
 sun_data['date'] = sun_data['sunrise'].dt.date
 sun_data = sun_data.set_index('date')
 
@@ -45,19 +45,32 @@ def moon_phase() -> int:
 
 def current_sunset() -> pd.Timestamp:
     """ Current Sunset value """
-    return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date()].loc['sunset']
+    try:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date()].loc['sunset']
+    except Exception as e:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date() - relativedelta(days=1)].loc['sunset']
+
+
+def current_sunrise() -> pd.Timestamp:
+    """ Current Sunset value """
+    try:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date()].loc['sunrise']
+    except Exception as e:
+        return sun_data.loc[datetime.datetime.utcnow().replace(year=2000).date() - relativedelta(days=1)].loc['sunrise']
 
 
 def lights_out(on_offset: int, hard_off: str = None) -> bool:
     """ Are we off now? """
-    now = pd.to_datetime(datetime.datetime.utcnow().replace(year=2000), utc=True).tz_convert('US/Arizona')
+    now = pd.to_datetime(datetime.datetime.utcnow().replace(year=2000)).tz_localize('UTC').tz_convert('US/Arizona')
     on_delta = relativedelta(minutes=on_offset)
-    sunrise = (sun_data.loc[now.date()]['sunrise'] + on_delta).tz_convert('US/Arizona')
-    sunset = (sun_data.loc[now.date()]['sunset'] + on_delta).tz_convert('US/Arizona')
+    sunrise = (sun_data.loc[now.date()]['sunrise'] + on_delta)
+    sunset = (sun_data.loc[now.date()]['sunset'] + on_delta)
     if hard_off:
         off_time = pd.to_datetime(datetime.datetime.strptime(hard_off, '%H:%M')).tz_localize('US/Arizona')
         if now.time() > off_time.time():
             return True
-    if sunrise < pd.to_datetime(now) < sunset:
+    if now < sunrise:
+        return False
+    if now < sunset + on_delta:
         return True
     return False
