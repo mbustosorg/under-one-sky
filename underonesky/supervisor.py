@@ -41,7 +41,7 @@ logger = logging.getLogger('supervisor')
 logger.setLevel(logging.INFO)
 log_format = logging.Formatter(FORMAT)
 
-file_handler = RotatingFileHandler('underonesky_supervisor.log', maxBytes=20000, backupCount=5)
+file_handler = RotatingFileHandler('underonesky_supervisor.log', maxBytes=100000, backupCount=5)
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(log_format)
 logger.addHandler(file_handler)
@@ -198,8 +198,8 @@ async def main_loop(ledplay_startup, disable_sun, debug):
             last_temp['temp_1'] = temp_sensor_1.get_currentValue() if temp_sensor_1 else 0
             last_temp['temp_2'] = temp_sensor_2.get_currentValue() if temp_sensor_2 else 0
             minute = datetime.datetime.now().minute % 10
-            if minute != last_temp["minute"]:
-                last_temp["minute"] = minute
+            if minute == 0 and (datetime.datetime.now().minute != last_temp["minute"]):
+                last_temp["minute"] = datetime.datetime.now().minute
                 logger.info("TEMP(CPU 1 2)|{}|{}|{}".format(last_temp["cpu"], last_temp["temp_1"], last_temp["temp_2"]))
         if temp_shutdown['cpu'] or temp_shutdown['temp_1'] or temp_shutdown['temp_2']:
             if temp_shutdown['cpu']:
