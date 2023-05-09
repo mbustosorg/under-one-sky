@@ -279,7 +279,8 @@ async def main_loop(ledplay_startup, disable_sun, debug):
         await asyncio.sleep(1)
 
 
-def startup_led_sequence(unused_addr=None):
+def startup_led_sequence(unused_addr=None, dummy=None):
+    logger.info('Startup led sequence')
     handle_background_run_index(None, 1, False)
     handle_background_mode(None, 1)
     handle_power_on()
@@ -287,7 +288,8 @@ def startup_led_sequence(unused_addr=None):
     handle_background_mode(None, 2)
 
 
-def shutdown_led_sequence(unused_addr=None):
+def shutdown_led_sequence(unused_addr=None, dummy=None):
+    logger.info('Shutdown led sequence')
     handle_background_run_index(None, 1, False)
     time.sleep(5)
     handle_background_mode(None, 0)

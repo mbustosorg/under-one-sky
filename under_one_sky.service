@@ -1,0 +1,13 @@
+Description=rhb-home-base
+After=network.target
+
+[Service]
+ExecStart=/home/pi/under-one-sky/run.sh
+WorkingDirectory=/home/pi/under-one-sky
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
